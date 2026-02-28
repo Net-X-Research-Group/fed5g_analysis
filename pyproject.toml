@@ -1,8 +1,8 @@
 [project]
 name = "fed-5g-analysis"
 version = "0.1.0"
-description = "Add your description here"
-requires-python = ">=3.13"
+description = "Analysis tooling and notebooks for the fed5g prj"
+requires-python = ">=3.14"
 dependencies = [
     "jupyterlab>=4.5.5",
     "matplotlib>=3.10.8",
