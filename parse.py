@@ -1,7 +1,7 @@
 import json
 import re
 from pathlib import Path
-
+import numpy as np
 import pandas as pd
 
 
@@ -58,16 +58,43 @@ def main():
     raw_data = Path.home() / 'Downloads' / 'FedAvg'
     output_dir = Path('data')
 
-    # The MASTER DF
+    # The MASTER DF FOR INDIVIDUAL
     df = pd.DataFrame(columns=['run_id', 'timestamp', 'nodes' ,'cid', 'bandwidth', 'tdd', 'rank', 'network', 'distribution', 'uplink_latency', 'downlink_latency'])
+
+    # THE MASTER DF FOR AGGREGATED METRICS
+    df_agg = pd.DataFrame(columns=['run_id', 'timestamp', 'nodes', 'bandwidth', 'tdd', 'rank', 'network', 'distribution', 'uplink_latency', 'downlink_latency'])
 
     for directory in raw_data.iterdir():
         if directory.name in ['Special cases', '.DS_Store']:
             continue
         experiment_params = parse_dir_name(directory)
 
-        # Get the latency files
-        latency_files = list(directory.glob('latency_*_CID*.csv'))
+        # Grab single file data
+        exec_time_files = list(directory.glob('execution_time.txt'))
+        start_time_files = list(directory.glob('start_time.txt'))
+
+        # Grab the agg data
+        agg_files = list(directory.glob('train_agg_metrics.json'))
+
+
+        # Grab the PHY layer metrics
+        if experiment_params['network'] == 'wwan':
+            phy_files = Path(directory / 'phys_layer').glob('ue*.csv')
+            phy_dfs = [pd.read_csv(f) for f in phy_files]
+            phy_df = pd.concat(phy_dfs, ignore_index=True)
+            phy_df = phy_df.drop(columns=['ueId', 'ranUeId', 'amfUeId', 'pmi'])
+
+            seg_group = phy_df.groupby('segment')
+
+            # Weight the BLER for each RNTI by the data sent per segement
+            bler_weighted = seg_group.apply(lambda x: pd.Series({'dlBler': np.average(x['dlBler'], weights=x['dlBytes']),
+                                                                 'ulBler': np.average(x['ulBler'], weights=x['ulBytes'])}))
+
+            phy = seg_group.median(numeric_only=True).reset_index()
+            phy[['dlBytes', 'ulBytes']] = seg_group[['dlBytes', 'ulBytes']].sum().values
+            phy[['dlBler', 'ulBler']] = bler_weighted.values
+
+
 
         # Grab the individual data
         individual_files = list(directory.glob('individual_metrics.json'))
@@ -81,6 +108,9 @@ def main():
 
             individual_df = pd.DataFrame(rows)
 
+        # Get the latency files
+        latency_files = list(directory.glob('latency_*_CID*.csv'))
+
         if latency_files:
             for latency in latency_files:
                 cid_match = re.search(r"CID(\d+)", latency.name)
@@ -93,6 +123,8 @@ def main():
                     # After building individual_df, add experiment params
                     for key in ['run_id', 'bandwidth', 'tdd', 'rank', 'network', 'distribution', 'nodes']:
                         individual_df[key] = experiment_params.get(key)
+
+                    latency_agg = latency_df.groupby(['cid']).agg({'uplink_latency': 'median', 'downlink_latency': 'median'}).reset_index()
 
 
                     merged = individual_df.merge(latency_df, on=['cid', 'round'], how='inner')
