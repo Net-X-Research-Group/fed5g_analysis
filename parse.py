@@ -62,7 +62,7 @@ def main():
     df = pd.DataFrame(columns=['run_id', 'timestamp', 'nodes' ,'cid', 'bandwidth', 'tdd', 'rank', 'network', 'distribution', 'uplink_latency', 'downlink_latency'])
 
     # THE MASTER DF FOR AGGREGATED METRICS
-    df_agg = pd.DataFrame(columns=['run_id', 'timestamp', 'nodes', 'bandwidth', 'tdd', 'rank', 'network', 'distribution', 'uplink_latency', 'downlink_latency'])
+    df_server = pd.DataFrame(columns=['run_id', 'timestamp', 'nodes', 'bandwidth', 'tdd', 'rank', 'network', 'distribution', 'uplink_latency', 'downlink_latency'])
 
     for directory in raw_data.iterdir():
         if directory.name in ['Special cases', '.DS_Store']:
@@ -74,7 +74,13 @@ def main():
         start_time_files = list(directory.glob('start_time.txt'))
 
         # Grab the agg data
-        agg_files = list(directory.glob('train_agg_metrics.json'))
+        agg_files = list(directory.glob('train_agg_metrics.csv'))
+
+        if agg_files:
+            raw_agg_data = pd.read_csv(agg_files[0])
+            for key in ['run_id', 'bandwidth', 'tdd', 'rank', 'network', 'distribution', 'nodes']:
+                raw_agg_data[key] = experiment_params[key]
+                raw_agg_data['round'] = raw_agg_data['server_round']
 
 
         # Grab the PHY layer metrics
@@ -107,11 +113,14 @@ def main():
                     rows.append(record)
 
             individual_df = pd.DataFrame(rows)
+            for key in ['run_id', 'bandwidth', 'tdd', 'rank', 'network', 'distribution', 'nodes']:
+                individual_df[key] = experiment_params.get(key)
 
         # Get the latency files
         latency_files = list(directory.glob('latency_*_CID*.csv'))
 
         if latency_files:
+            latency_dfs = pd.DataFrame(columns=['round', 'cid', 'uplink_latency', 'downlink_latency'])
             for latency in latency_files:
                 cid_match = re.search(r"CID(\d+)", latency.name)
                 if cid_match:
@@ -120,19 +129,34 @@ def main():
                     latency_df.index.name = 'round'
                     latency_df = latency_df.reset_index()
                     latency_df['round'] = latency_df['round'] + 1
-                    # After building individual_df, add experiment params
-                    for key in ['run_id', 'bandwidth', 'tdd', 'rank', 'network', 'distribution', 'nodes']:
-                        individual_df[key] = experiment_params.get(key)
+                    latency_dfs = pd.concat([latency_dfs, latency_df])
+            latency_dfs['run_id'] = experiment_params['run_id']
+            latency_dfs.reset_index(inplace=True)
+        individual_df = pd.merge(individual_df, latency_dfs, on=['run_id', 'cid', 'round'], how='inner') # This store all individual data for an experiment
 
-                    latency_agg = latency_df.groupby(['cid']).agg({'uplink_latency': 'median', 'downlink_latency': 'median'}).reset_index()
+        # Add the start_time and execution_time
+        if start_time_files:
+            with open(start_time_files[0], 'r') as f:
+                start_time = f.readlines()[0].strip().replace('s', '') # This is in epoch time
+
+        if exec_time_files:
+            with open(exec_time_files[0], 'r') as f:
+                exec_time = f.readlines()[0].strip().replace('s', '')
 
 
-                    merged = individual_df.merge(latency_df, on=['cid', 'round'], how='inner')
+        individual_df['start_time'] = start_time
+        individual_df['exec_time'] = exec_time
 
-                    df = pd.concat([df, merged], ignore_index=True)
+
+        # FINAL DF concat to master (Individual)
+        df = pd.concat([df, individual_df]) # Concat it to the master
 
 
-    df.to_csv(output_dir / 'all_data.csv', index=False)
+
+    df.to_csv(output_dir / 'all_data.csv', index=False) # WLAN IS GONE HERE
+
+    df_server.to_csv(output_dir / 'all_data_agg.csv', index=False)
+
 
     # Filter and save the nodes data
     Path(output_dir, 'nodes').mkdir(parents=True, exist_ok=True)
