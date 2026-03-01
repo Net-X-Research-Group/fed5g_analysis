@@ -211,7 +211,22 @@ def main():
 
 
             # Expected Calibration Error
+            n_bins = 10 # This is num classes
+            tp = (all_predictions == all_labels).float() # True positive mask
+            bin_boundaries = np.linspace(0, 1, n_bins + 1)
+            n_samples = len(all_confidences)
+            ece = 0.0
 
+            for m in range(n_bins):
+                bin_mask = (all_confidences > bin_boundaries[m]) & (all_confidences < bin_boundaries[m + 1])
+                bin_size = bin_mask.sum().item()
+
+                if bin_size == 0:
+                    continue
+                bin_acc = tp[bin_mask].mean.item()
+                bin_conf = all_confidences[bin_mask].mean().item()
+
+                ece += (bin_size / n_samples) * abs(bin_acc - bin_conf)
 
             # Save to DF
             model_df = pd.DataFrame([{
@@ -231,6 +246,7 @@ def main():
                 **{f'acc_{cls}': per_class_accuracy[i] for i, cls in enumerate(test_set.classes)},
                 'accuracy': correct / total,
                 'loss': running_loss / len(test_loader),
+                'ece': ece,
             }])
 
         df_models = pd.concat([df_models, model_df])
@@ -248,6 +264,7 @@ def main():
     Path(output_dir, 'nodes').mkdir(parents=True, exist_ok=True)
     for n in [1,3,4,5,6]:
         df[df['nodes'] == f'{n}N'].to_csv(output_dir / 'nodes' / f'{n}_nodes.csv', index=False)
+        df_models[df_models['nodes'] == f'{n}N'].to_csv(output_dir / 'nodes' / f'models_{n}_nodes.csv', index=False)
 
     # Filter and save data for TDD
     Path(output_dir, 'tdd_split').mkdir(parents=True, exist_ok=True)
