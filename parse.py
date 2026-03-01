@@ -84,7 +84,7 @@ def main():
 
 
         # Grab the PHY layer metrics
-        if experiment_params['network'] == 'wwan':
+        """if experiment_params['network'] == 'wwan':
             phy_files = Path(directory / 'phys_layer').glob('ue*.csv')
             phy_dfs = [pd.read_csv(f) for f in phy_files]
             phy_df = pd.concat(phy_dfs, ignore_index=True)
@@ -98,7 +98,7 @@ def main():
 
             phy = seg_group.median(numeric_only=True).reset_index()
             phy[['dlBytes', 'ulBytes']] = seg_group[['dlBytes', 'ulBytes']].sum().values
-            phy[['dlBler', 'ulBler']] = bler_weighted.values
+            phy[['dlBler', 'ulBler']] = bler_weighted.values"""
 
 
 
