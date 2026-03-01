@@ -3,7 +3,15 @@ import re
 from pathlib import Path
 import numpy as np
 import pandas as pd
-
+from torch import nn
+from torchvision import datasets
+from torchvision.models import squeezenet1_1
+import torch
+from torchvision.transforms import ToTensor, Normalize, Compose
+from sklearn.metrics import confusion_matrix
+from tqdm import tqdm
+import warnings
+warnings.filterwarnings('ignore', category=np.exceptions.VisibleDeprecationWarning)
 
 def parse_dir_name(directory):
     params = {
@@ -59,12 +67,21 @@ def main():
     output_dir = Path('data')
 
     # The MASTER DF FOR INDIVIDUAL
-    df = pd.DataFrame(columns=['run_id', 'timestamp', 'nodes' ,'cid', 'bandwidth', 'tdd', 'rank', 'network', 'distribution', 'uplink_latency', 'downlink_latency'])
+    df = pd.DataFrame(columns=['run_id', 'timestamp', 'nodes' ,'cid', 'bandwidth', 'tdd', 'rank', 'network', 'distribution'])
 
     # THE MASTER DF FOR AGGREGATED METRICS
-    df_server = pd.DataFrame(columns=['run_id', 'timestamp', 'nodes', 'bandwidth', 'tdd', 'rank', 'network', 'distribution', 'uplink_latency', 'downlink_latency'])
+    df_server = pd.DataFrame(columns=['run_id', 'timestamp', 'nodes', 'bandwidth', 'tdd', 'rank', 'network', 'distribution'])
 
-    for directory in raw_data.iterdir():
+    df_models = pd.DataFrame(columns=['run_id', 'nodes', 'bandwidth', 'tdd', 'rank', 'network', 'distribution'])
+
+    # ML Stuff
+    transform = Compose([ToTensor(), Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+    test_set = datasets.CIFAR10(root='./data', train=False, transform=transform, download=True)
+    test_loader = torch.utils.data.DataLoader(test_set, batch_size=250, shuffle=False)
+    device = torch.device('mps')
+
+    directories = list(raw_data.iterdir())
+    for directory in tqdm(directories, desc='Processing experiments.'):
         if directory.name in ['Special cases', '.DS_Store']:
             continue
         experiment_params = parse_dir_name(directory)
@@ -77,10 +94,10 @@ def main():
         agg_files = list(directory.glob('train_agg_metrics.csv'))
 
         if agg_files:
-            raw_agg_data = pd.read_csv(agg_files[0])
+            agg_df = pd.read_csv(agg_files[0])
             for key in ['run_id', 'bandwidth', 'tdd', 'rank', 'network', 'distribution', 'nodes']:
-                raw_agg_data[key] = experiment_params[key]
-                raw_agg_data['round'] = raw_agg_data['server_round']
+                agg_df[key] = experiment_params[key]
+                agg_df['round'] = agg_df['server_round']
 
 
         # Grab the PHY layer metrics
@@ -134,6 +151,9 @@ def main():
             latency_dfs.reset_index(inplace=True)
         individual_df = pd.merge(individual_df, latency_dfs, on=['run_id', 'cid', 'round'], how='inner') # This store all individual data for an experiment
 
+        # Calc median of round
+        agg_df = pd.merge(agg_df, latency_dfs.groupby(['run_id', 'round'])[['uplink_latency', 'downlink_latency']].mean(), on=['run_id', 'round'], how='inner')
+
         # Add the start_time and execution_time
         if start_time_files:
             with open(start_time_files[0], 'r') as f:
@@ -146,16 +166,82 @@ def main():
 
         individual_df['start_time'] = start_time
         individual_df['exec_time'] = exec_time
+        agg_df['start_time'] = start_time
+        agg_df['exec_time'] = exec_time
 
 
         # FINAL DF concat to master (Individual)
         df = pd.concat([df, individual_df]) # Concat it to the master
+        df_server = pd.concat([df_server, agg_df])
+
+
+        model_files = list(directory.glob('*.pt'))
+        if model_files:
+            model = squeezenet1_1(num_classes=10)
+            model.load_state_dict(torch.load(model_files[0], weights_only=True))
+            model.eval()
+
+            model.to(device)
+            correct, total, running_loss = 0, 0, 0.0
+            all_predictions, all_labels, all_confidences = [], [], []
+            criterion = nn.CrossEntropyLoss()
+
+            with torch.no_grad():
+                for images, labels in test_loader:
+                    images, labels = images.to(device), labels.to(device)
+                    outputs = model(images)
+                    running_loss += criterion(outputs, labels).item()
+                    probs = torch.softmax(outputs, dim=1)
+                    _, predicted = torch.max(outputs.data, 1)
+                    correct += (predicted == labels).sum().item()
+                    total += labels.size(0)
+
+                    all_predictions.append(predicted.cpu())
+                    all_labels.append(labels.cpu())
+                    all_confidences.append(probs.max(dim=1).values.cpu())
+
+
+            all_predictions = torch.cat(all_predictions)
+            all_labels = torch.cat(all_labels)
+            all_confidences = torch.cat(all_confidences)
+
+            # Per class accuracy
+            cm = confusion_matrix(all_labels, all_predictions)
+            per_class_accuracy = cm.diagonal() / cm.sum(axis=1)
+
+
+            # Expected Calibration Error
+
+
+            # Save to DF
+            model_df = pd.DataFrame([{
+                'run_id': experiment_params['run_id'],
+                'start_time': start_time,
+                'exec_time': exec_time,
+                'network': experiment_params['network'],
+                'nodes': experiment_params['nodes'],
+                'bandwidth': experiment_params['bandwidth'],
+                'tdd': experiment_params['tdd'],
+                'rank': experiment_params['rank'],
+                'distribution': experiment_params['distribution'],
+                'correct': correct,
+                'total': total,
+                'running_loss': running_loss,
+                'per_class_accuracy': per_class_accuracy.tolist(),
+                **{f'acc_{cls}': per_class_accuracy[i] for i, cls in enumerate(test_set.classes)},
+                'accuracy': correct / total,
+                'loss': running_loss / len(test_loader),
+            }])
+
+        df_models = pd.concat([df_models, model_df])
 
 
 
     df.to_csv(output_dir / 'all_data.csv', index=False) # WLAN IS GONE HERE
 
     df_server.to_csv(output_dir / 'all_data_agg.csv', index=False)
+
+    df_models.to_csv(output_dir / 'all_models_data.csv', index=False)
 
 
     # Filter and save the nodes data
