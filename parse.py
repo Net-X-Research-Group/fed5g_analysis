@@ -101,23 +101,33 @@ def main():
 
 
         # Grab the PHY layer metrics
-        """if experiment_params['network'] == 'wwan':
+        if experiment_params['network'] == 'wwan':
+            common_files = list(Path(directory / 'phys_layer').glob('common.csv'))
             phy_files = Path(directory / 'phys_layer').glob('ue*.csv')
-            phy_dfs = [pd.read_csv(f) for f in phy_files]
-            phy_df = pd.concat(phy_dfs, ignore_index=True)
-            phy_df = phy_df.drop(columns=['ueId', 'ranUeId', 'amfUeId', 'pmi'])
 
-            seg_group = phy_df.groupby('segment')
+            if common_files and phy_files:
+                phy_dfs = [pd.read_csv(f) for f in phy_files]
+                phy_df = pd.concat(phy_dfs, ignore_index=True)
+                phy_df = phy_df.drop(columns=['ueId', 'ranUeId', 'amfUeId', 'pmi'])
 
-            # Weight the BLER for each RNTI by the data sent per segement
-            bler_weighted = seg_group.apply(lambda x: pd.Series({'dlBler': np.average(x['dlBler'], weights=x['dlBytes']),
-                                                                 'ulBler': np.average(x['ulBler'], weights=x['ulBytes'])}))
+                common_df = pd.read_csv(common_files[0])
+                common_df = common_df.drop(columns=['train_loss', 'train_time', 'eval_loss', 'eval_acc', 'eval_time'])
 
-            phy = seg_group.median(numeric_only=True).reset_index()
-            phy[['dlBytes', 'ulBytes']] = seg_group[['dlBytes', 'ulBytes']].sum().values
-            phy[['dlBler', 'ulBler']] = bler_weighted.values"""
+                seg_group = phy_df.groupby('segment')
 
+                # Weight the BLER for each RNTI by the data sent per segement
+                bler_weighted = seg_group.apply(lambda x: pd.Series({'dlBler': np.average(x['dlBler'], weights=x['dlBytes']),
+                                                                     'ulBler': np.average(x['ulBler'], weights=x['ulBytes'])}))
 
+                phy = seg_group.median(numeric_only=True).reset_index()
+                phy[['dlBytes', 'ulBytes']] = seg_group[['dlBytes', 'ulBytes']].sum().values
+                phy[['dlBler', 'ulBler']] = bler_weighted.values
+
+                phy = phy.merge(common_df, on='segment', how='inner')
+                phy['round'] = phy['server_round']
+                phy.drop(columns=['server_round', 'timestamp'], inplace=True)
+
+                agg_df = agg_df.merge(phy, on='round', how='inner')
 
         # Grab the individual data
         individual_files = list(directory.glob('individual_metrics.json'))
@@ -137,7 +147,7 @@ def main():
         latency_files = list(directory.glob('latency_*_CID*.csv'))
 
         if latency_files:
-            latency_dfs = pd.DataFrame(columns=['round', 'cid', 'uplink_latency', 'downlink_latency'])
+            latency_parts = []
             for latency in latency_files:
                 cid_match = re.search(r"CID(\d+)", latency.name)
                 if cid_match:
@@ -146,9 +156,12 @@ def main():
                     latency_df.index.name = 'round'
                     latency_df = latency_df.reset_index()
                     latency_df['round'] = latency_df['round'] + 1
-                    latency_dfs = pd.concat([latency_dfs, latency_df])
-            latency_dfs['run_id'] = experiment_params['run_id']
-            latency_dfs.reset_index(inplace=True)
+                    latency_parts.append(latency_df)
+
+            if latency_parts:
+                latency_dfs = pd.concat(latency_parts, ignore_index=True)
+                latency_dfs['run_id'] = experiment_params['run_id']
+
         individual_df = pd.merge(individual_df, latency_dfs, on=['run_id', 'cid', 'round'], how='inner') # This store all individual data for an experiment
 
         # Calc median of round
@@ -173,7 +186,6 @@ def main():
         # FINAL DF concat to master (Individual)
         df = pd.concat([df, individual_df]) # Concat it to the master
         df_server = pd.concat([df_server, agg_df])
-
 
         model_files = list(directory.glob('*.pt'))
         if model_files:
@@ -223,7 +235,7 @@ def main():
 
                 if bin_size == 0:
                     continue
-                bin_acc = tp[bin_mask].mean.item()
+                bin_acc = tp[bin_mask].mean().item()
                 bin_conf = all_confidences[bin_mask].mean().item()
 
                 ece += (bin_size / n_samples) * abs(bin_acc - bin_conf)
@@ -263,28 +275,38 @@ def main():
     # Filter and save the nodes data
     Path(output_dir, 'nodes').mkdir(parents=True, exist_ok=True)
     for n in [1,3,4,5,6]:
-        df[df['nodes'] == f'{n}N'].to_csv(output_dir / 'nodes' / f'{n}_nodes.csv', index=False)
-        df_models[df_models['nodes'] == f'{n}N'].to_csv(output_dir / 'nodes' / f'models_{n}_nodes.csv', index=False)
+        df[df['nodes'] == f'{n}N'].to_csv(output_dir / 'nodes' / f'{n}nodes.csv', index=False)
+        df_server[df_server['nodes'] == f'{n}N'].to_csv(output_dir / 'nodes' / f'{n}nodes_serverset', index=False)
+        df_models[df_models['nodes'] == f'{n}N'].to_csv(output_dir / 'nodes' / f'{n}nodes_modelset', index=False)
 
     # Filter and save data for TDD
     Path(output_dir, 'tdd_split').mkdir(parents=True, exist_ok=True)
     for tdd in ['7-2', '5-4', '2-2', '2-7', '3-1']:
         df[df['tdd'] == tdd].to_csv(output_dir / 'tdd_split' / f'{tdd}_tdd.csv', index=False)
+        df_server[df_server['tdd'] == tdd].to_csv(output_dir / 'tdd_split' / f'{tdd}_tdd_server_split.csv', index=False)
+        df_models[df_models['tdd'] == tdd].to_csv(output_dir / 'tdd_split' / f'{tdd}_tdd_modelset.csv', index=False)
 
     # Filter and save data for Bandwidth
     Path(output_dir, 'bandwidth').mkdir(parents=True, exist_ok=True)
     for bw in ['20 MHz', '40 MHz', '80 MHz', '100 MHz']:
         df[df['bandwidth'] == bw].to_csv(output_dir / 'bandwidth' / f'{bw.replace(' ', '').lower()}_bandwidth.csv', index=False)
+        df_server[df_server['bandwidth'] == bw].to_csv(output_dir / 'bandwidth' / f'{bw.replace(' ', '').lower()}_bandwidth_serverset.csv', index=False)
+        df_models[df_models['bandwidth'] == bw].to_csv(output_dir / 'bandwidth' / f'{bw.replace(' ', '').lower()}_bandwidth_modelset.csv', index=False)
 
     # Filter and save data for Rank
     Path(output_dir, 'rank').mkdir(parents=True, exist_ok=True)
     for rank in ['2x2', '1x1']:
         df[df['rank'] == rank].to_csv(output_dir / 'rank' / f'{rank.lower()}_rank.csv', index=False)
+        df_server[df_server['rank'] == rank].to_csv(output_dir / 'rank' / f'{rank.lower()}_rank_serverset.csv', index=False)
+        df_models[df_models['rank'] == rank].to_csv(output_dir / 'rank' / f'{rank.lower()}_rank_modelset.csv', index=False)
 
     # Filter and save data for Distribution
     Path(output_dir, 'distribution').mkdir(parents=True, exist_ok=True)
     for dist in ['dirichlet', 'iid']:
         df[df['distribution'] == dist].to_csv(output_dir / 'distribution' / f'{dist.lower()}.csv', index=False)
+        df_server[df_server['distribution'] == dist].to_csv(output_dir / 'distribution' / f'{dist.lower()}_serverset.csv', index=False)
+        df_models[df_models['distribution'] == dist].to_csv(output_dir / 'distribution' / f'{dist.lower()}_modelset.csv', index=False)
+
 
 if __name__ == '__main__':
     main()
