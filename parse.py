@@ -15,13 +15,13 @@ warnings.filterwarnings('ignore', category=np.exceptions.VisibleDeprecationWarni
 
 def parse_dir_name(directory):
     params = {
-        'run_id': None,
-        'nodes': None,
-        'bandwidth': None,
-        'tdd': None,
-        'rank': None,
+        'run_id': '',
+        'nodes': '',
+        'bandwidth': '',
+        'tdd': '',
+        'rank': '',
         'network': 'wwan',
-        'distribution': None,
+        'distribution': '',
     }
 
     dir_name_parts = directory.name.split('_')
@@ -46,18 +46,18 @@ def parse_dir_name(directory):
             params['distribution'] = 'iid'
         elif re.search(r"WiFi", part, re.IGNORECASE):
             params['network'] = 'wlan'
-            params['rank'] = None
-            params['tdd'] = None
-            params['congestion'] = None
-            params['bandwidth'] = None
+            params['rank'] = ''
+            params['tdd'] = ''
+            params['congestion'] = ''
+            params['bandwidth'] = ''
         elif re.search(r"wwan", part, re.IGNORECASE):
             params['network'] = 'wwan'
         elif re.search(r"Ethernet", part, re.IGNORECASE):
             params['network'] = 'lan'
-            params['rank'] = None
-            params['tdd'] = None
-            params['congestion'] = None
-            params['bandwidth'] = None
+            params['rank'] = ''
+            params['tdd'] = ''
+            params['congestion'] =  ''
+            params['bandwidth'] = ''
 
     return params
 
@@ -276,8 +276,8 @@ def main():
     Path(output_dir, 'nodes').mkdir(parents=True, exist_ok=True)
     for n in [1,3,4,5,6]:
         df[df['nodes'] == f'{n}N'].to_csv(output_dir / 'nodes' / f'{n}nodes.csv', index=False)
-        df_server[df_server['nodes'] == f'{n}N'].to_csv(output_dir / 'nodes' / f'{n}nodes_serverset', index=False)
-        df_models[df_models['nodes'] == f'{n}N'].to_csv(output_dir / 'nodes' / f'{n}nodes_modelset', index=False)
+        df_server[df_server['nodes'] == f'{n}N'].to_csv(output_dir / 'nodes' / f'{n}nodes_serverset.csv', index=False)
+        df_models[df_models['nodes'] == f'{n}N'].to_csv(output_dir / 'nodes' / f'{n}nodes_modelset.csv', index=False)
 
     # Filter and save data for TDD
     Path(output_dir, 'tdd_split').mkdir(parents=True, exist_ok=True)
