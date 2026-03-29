@@ -1,21 +1,23 @@
 text.usetex: True
-text.latex.preamble: \usepackage{amsmath}\usepackage{amssymb}
+text.latex.preamble: \usepackage{amsmath}\usepackage{amssymb}\usepackage{libertine}\usepackage[libertine]{newtxmath}
 
-
-savefig.bbox: tight
-savefig.format: pdf
-
-figure.figsize : 3.3, 2.5
+# Set default figure size
+figure.figsize : 3.49, 2.15
 figure.dpi : 600
 
-font.size : 8
-font.family : serif
+# Font sizes
+axes.labelsize: 7
+xtick.labelsize: 7
+ytick.labelsize: 7
+legend.fontsize: 7
+font.size: 7
 
-font.serif : Times
-
-legend.fontsize: 8
-axes.labelsize: 8
-legend.markerscale:   1.0      # the relative size of legend markers vs. original
 
 pdf.fonttype : 42
 ps.fonttype : 42
+
+
+# Always save as 'tight'
+savefig.bbox : tight
+savefig.pad_inches : 0.01  # Use virtually all space when we specify figure dimensions
+savefig.format: pdf
